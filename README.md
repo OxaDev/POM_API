@@ -7,14 +7,24 @@ Distribution
 Librairies nécessaires
 - django 4.2.6
 - djangorestframework 3.14.0
-- pycrypto (à voir)
+- rsa 4.9
+- pyjwt 2.8.0
+- base64 (implémentée de base dans la distrib python)
+
+## FINI
+### Users
+- Encodage du mot de passe avant de le mettre en DB (avec une clé public et on jette la clé privé, bon on l'a gardé au cas , elle changera plus tard)
+- Modification d'un mot de passe utilisateur (lorsqu'il envoie le jwt pour assurer qu'il est bien authentifié)
+
+### Token
+- Génération de Tokens JWT
 
 ## TO DO
 ### Users
-- Recherche d'un user en fonction de son email, ou username
-- Encodage du mot de passe avant de le mettre en DB (avec une clé public et on jette la clé privé)
-- Modification d'un mot de passe
 - Suppression d'un utilisateur
+
+### Tokens
+- Ajouter une vérification par signature des (vérifier la secret key avec la signature du token envoyé)
 
 ### Messages
 - Créer le model de messages (localisation, contenu, likes etc...)
@@ -23,3 +33,6 @@ Librairies nécessaires
 
 ### Données
 - Gérer la connexion avec un réelle bas de données PostGreSQL et non celle implémentée par Django
+
+### Documentations
+- Commencer à rédiger une doc propres des différentes méthodes de l'API (possiblement un markdown quelque part)

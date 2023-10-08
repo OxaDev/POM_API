@@ -21,4 +21,6 @@ from users.views import *
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/users', ManageUsers.as_view(), name='user-manage'),
+    path('api/users/auth', ManageToken.as_view(), name='token-manage'),
+    path('api/users/auth/admin', ManageTokenAdmin.as_view(), name='token-admin-manage'),
 ]
