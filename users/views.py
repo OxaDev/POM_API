@@ -20,22 +20,41 @@ class UtilsUsers():
   def emailAlreadyExist(pEmail):
     return len(User.objects.filter(Q(email=pEmail) ).values()) == 1
   
-  def checkTokenAuth(pToken):
+  def isTokenSignatureValid(pToken, pivate_tokenkey_filename):
+    with open(pivate_tokenkey_filename, mode='rb') as privatefile:
+        secret_key = privatefile.read().decode()
+    
+    try:
+      jwt_decoded = jwt.decode(pToken,secret_key, algorithms='HS256')
+      return jwt_decoded
+    except jwt.exceptions.InvalidSignatureError:
+      return False
+    except jwt.exceptions.DecodeError:
+      return False
+    
+  def checkTokenAuth(pToken, userEmail):
     returnResp={
       "code":[],
       "message":[]   
     }
+    
+    tempToken = UtilsUsers.isTokenSignatureValid(pToken, UtilsUsers.privjwt_filename)
 
-    # Trouver le token
-    tempToken = Token.objects.filter(token_value=pToken).get()
-    # Si aucun token n'a été trouvé
-    if(tempToken == None):
+    # Si le token JWT est invalide (signature non valide)
+    if( UtilsUsers.isTokenSignatureValid(pToken, UtilsUsers.privjwt_filename) ==  False ):
       returnResp["code"].append("463")
       returnResp["message"].append("Invalid Auth Token")
+      # Pas besoin d'aller à la suite, le token est illisible
+      return returnResp
+    if(tempToken["email"] != userEmail):
+      returnResp["code"].append("470")
+      returnResp["message"].append("Auth Token doesn't match email provided in request")
+      # Pas besoin d'aller à la suite, le token est illisible
+      return returnResp
 
     # Verifier si le token est expiré
     # Format des dates : 22:06:07 14-04-3940
-    list_date_str = tempToken.delete_date.split(" ")
+    list_date_str = tempToken["expire_date"].split(" ")
     second = int(list_date_str[0].split(":")[2])
     minute = int(list_date_str[0].split(":")[1])
     hour = int(list_date_str[0].split(":")[0])
@@ -48,27 +67,62 @@ class UtilsUsers():
       # Token périmé, il faut en regénérer un autre
       returnResp["code"].append("463")
       returnResp["message"].append("Expired Auth Token")
-
+    
     # Si le returnResp n'a pas été modifié, il n'y a aucun problème avec le token
     return returnResp
-  
+    
   def getUserFromEmail(pEmail):
-    return User.objects.filter(email=pEmail).get()
+    try:
+      tempUser = User.objects.filter(email=pEmail).get()
+      return tempUser
+    except User.DoesNotExist:
+      return None
+    
+  def getUserFromUsername(pUsername):
+    try:
+      tempUser = User.objects.filter(username=pUsername).get()
+      return tempUser
+    except User.DoesNotExist:
+      return None
+  
+  def getJsonOfUserDetailed(pUser):
+    return {"username":pUser.username,"email":pUser.email, "joined_date": pUser.joined_date, "password": pUser.password}
 
 class ManageUsers(APIView):
   serializer_class = UserSerializer
   pubkey_filename = UtilsUsers.pubkey_filename
 
   def get(self, request, format=None):
-        usernames = [{"username":user.username,"email":user.email} for user in User.objects.all()]
-        return Response(usernames)
+    if("email" not in request.data.keys()):
+      return Response( [{"username":user.username,"email":user.email} for user in User.objects.all()] )
     
+    returnResp={
+      "code":[],
+      "message":[]   
+    }
+
+    # Si la recherche se basait uniquement sur l'email
+    search_email = request.data["email"]
+    userFromEmail = UtilsUsers.getUserFromEmail(search_email)
+    if(userFromEmail == None):
+      returnResp["code"].append("465")
+      returnResp["message"].append("No user found with this email")
+    else:
+      returnResp["code"].append("200")
+      returnResp["message"].append("User found from email")
+      returnResp["user"] = []
+      returnResp["user"].append( UtilsUsers.getJsonOfUserDetailed(userFromEmail) )
+
+
+    return Response(returnResp)
+
   def createUser(self, userData):
     returnResp={
       "code":[],
       "message":[]   
     }
-    tempUser = User(email = userData["email"], username= userData["username"], password = userData["password"], joined_date=userData["joined_date"])
+    currentDate=datetime.datetime.utcnow().strftime("%d-%m-%Y")
+    tempUser = User(email = userData["email"], username= userData["username"], password = userData["password"], joined_date=currentDate)
     alreadyInEmail = UtilsUsers.emailAlreadyExist(tempUser.email)
     alreadyInUsername = UtilsUsers.usernameAlreadyExist(tempUser.username)
     passwordIsValid = not UtilsUsers.checkPassword(tempUser.password)
@@ -115,7 +169,7 @@ class ManageUsers(APIView):
     }
 
     passwordIsValid = UtilsUsers.checkPassword(requestData["password"])
-    tokenIsValid = UtilsUsers.checkTokenAuth(tokenAuth)
+    tokenIsValid = UtilsUsers.checkTokenAuth(tokenAuth,requestData["email"])
     alreadyInEmail = UtilsUsers.emailAlreadyExist(requestData["email"])
 
     if( passwordIsValid ): 
@@ -142,22 +196,17 @@ class ManageUsers(APIView):
     return returnResp
     
   def post(self, request, format=None):
+    return Response(self.createUser(request.data))
+
+  def put(self, request, format=None):
+    return Response(self.editUser(request.data, request.headers['Auth-Token']))
+
+  def delete(self, request, format=None):
     userData = request.data
+    return Response({})
 
-    if(userData["state"] == "create"):
-      returnResp= self.createUser(userData)
-    elif(userData["state"] == "edit"):
-      returnResp= self.editUser(userData, request.headers['Auth-Token'])
-    else:
-      returnResp={
-        "code":["465"],
-        "message":["No state found in request"]   
-      }
-
-    return Response(returnResp)
 
 class ManageToken(APIView):
-  serializer_class = TokenSerializer
   privjwt_filename = UtilsUsers.privjwt_filename
 
   def generateJWT(self,requestData, tempUser):
@@ -203,9 +252,6 @@ class ManageToken(APIView):
 
       token = encrypt_jwt(payload, self.privjwt_filename)
 
-      tempToken = Token(token_value=token, creation_date=datenow.strftime("%H:%M:%S %d-%m-%Y"), delete_date=expire_date.strftime("%H:%M:%S %d-%m-%Y"), email_user=tempUser.email)
-      tempToken.save()
-
       returnResp["code"].append("200")
       returnResp["message"].append("Token generated !")
       returnResp["token"] = token
@@ -232,25 +278,9 @@ class ManageToken(APIView):
 
     # On vérifie si le mot de passe est valide
     if(tempUser.password == userData["password"] ):
-
-      # Si le user a déjà un ou plusieurs tokens, on les supprimes
-      Token.objects.filter(email_user=tempUser.email).delete()
-
       returnResp = self.generateJWT(userData,tempUser)
     else:
       returnResp["code"].append("468")
       returnResp["message"].append("Invalid password")
     
     return Response(returnResp)
-  
-class ManageTokenAdmin(APIView):
-  serializer_class = TokenSerializer
-
-  def get(self, request, format=None):
-  
-    if("email" in request.data.keys()):
-      tokens = [token.__str__() for token in Token.objects.filter(email_user=request.data["email"])]
-    else:
-      tokens = [token.__str__() for token in Token.objects.all()]
-
-    return Response(tokens)
